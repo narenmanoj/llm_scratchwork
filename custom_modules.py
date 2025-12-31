@@ -97,15 +97,19 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         self.max_seq_len = max_seq_len
 
         # self.theta_vec = 
+        self.precomputed_rots = None # TODO: implement
         raise NotImplementedError
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
-        # x can be k or q. input has shape (..., seq_len, d_k) or (..., seq_len, d_q)
+        # x flipped
+        x_flip = torch.stack((-x[..., 1::2], x[..., 0::2]), dim=-1).view(*(x.shape[:-1]), -1)
 
-        # return shape: (..., seq_len, d_k)
+        # x can be some collection of key or query vectors 
+        rots = self.precomputed_rots[token_positions]
 
-        # select the 
-        raise NotImplementedError
+        # TODO: implement the below more efficiently
+        result = einsum(rots, x, "seq_len d_k d_k, ... seq_len d_k -> ... seq_len d_k")
+        return result
     
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None):
