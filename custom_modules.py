@@ -3,6 +3,10 @@ from jaxtyping import Float, Int
 import numpy as np
 import torch
 
+def _subtract_max(x: torch.Tensor, dim=0) -> torch.Tensor:
+    vals, indices = torch.max(x, dim=dim, keepdim=True)
+    return x - vals.expand_as(x)
+
 
 def _default_init(num_rows, num_cols, device=None, dtype=None) -> torch.Tensor:
     init_var = 2.0 / (num_rows + num_cols)
@@ -19,8 +23,7 @@ def silu(x: torch.Tensor) -> torch.Tensor:
 
 
 def softmax(x: torch.Tensor, dim=0) -> torch.Tensor:
-    vals, indices = torch.max(x, dim=dim, keepdim=True)
-    expx = torch.exp(x - vals.expand_as(x))
+    expx = torch.exp(_subtract_max(x, dim=dim))
     axis_sum = torch.sum(expx, dim=dim, keepdim=True).expand_as(x)
     return expx / axis_sum
 
@@ -260,8 +263,7 @@ class TransformerLM(torch.nn.Module):
 def cross_entropy(
     inputs: Float[torch.Tensor, " batch_size vocab_size"], targets: Int[torch.Tensor, " batch_size"]
 ) -> Float[torch.Tensor, ""]:
-    vals, indices = torch.max(inputs, dim=1, keepdim=True)
-    inputs_demaxed = inputs - vals.expand_as(inputs)
+    inputs_demaxed = _subtract_max(inputs, dim=1)
     log_sum_exps = torch.log(torch.exp(inputs_demaxed).sum(dim=1))
 
     targets_blown = targets.reshape((len(targets), 1))
