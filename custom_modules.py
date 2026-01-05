@@ -1,4 +1,5 @@
 from einops import einsum, rearrange, reduce
+from jaxtyping import Bool, Float, Int
 import numpy as np
 import torch
 import math
@@ -255,3 +256,15 @@ class TransformerLM(torch.nn.Module):
             interm = layer(interm)
         result = self.last_linear(self.last_norm(interm))
         return result
+
+
+def cross_entropy(
+    inputs: Float[torch.Tensor, " batch_size vocab_size"], targets: Int[torch.Tensor, " batch_size"]
+) -> Float[torch.Tensor, ""]:
+    vals, indices = torch.max(inputs, dim=1, keepdim=True)
+    inputs_demaxed = inputs - vals.expand_as(inputs)
+    log_sum_exps = torch.log(torch.exp(inputs_demaxed).sum(dim=1))
+
+    targets_blown = targets.reshape((len(targets), 1))
+    sum_vals = inputs_demaxed.gather(dim=1, index=targets_blown)
+    return -torch.mean(sum_vals.flatten() - log_sum_exps)
