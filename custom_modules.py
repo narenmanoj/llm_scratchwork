@@ -276,25 +276,48 @@ def cross_entropy(
 
 
 class AdamW(torch.optim.Optimizer):
-    def __init__(self, params, first_moment, second_moment):
+    def __init__(self, params, lr=1e-3, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8):
         defaults = {
-            "first_moment": first_moment,
-            "second_moment": second_moment,
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "betas": betas,
+            "eps": eps
         }
         super().__init__(params, defaults)
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.betas = betas
+        self.eps = eps
 
     def step(self, closure: Optional[Callable] = None):
-        loss = None if closure is None else closure() 
+        loss = None if closure is None else closure()
+        alpha = self.lr
+        beta_1 = self.betas[0]
+        beta_2 = self.betas[1]
+        eps = self.eps
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
                     continue
                 state = self.state[p]
-                t = state.get("t", 0)
+                t = state.get("t", 1)
                 grad = p.grad.data
+
                 # in here, do all the work
+                first_moment = state.get("first_moment", torch.zeros(grad.shape))
+                second_moment = state.get("second_moment", torch.zeros(grad.shape))
+
+                first_moment = beta_1 * first_moment + (1 - beta_1) * grad
+                second_moment = beta_2 * second_moment + (1 - beta_2) * torch.square(grad)
+                alpha_t = alpha * math.sqrt(1 - beta_2 ** t) / (1 - beta_1 ** t)
+
+                p.data -= alpha_t * (first_moment / (torch.sqrt(second_moment) + eps))
+                p.data *= (1 - alpha * self.weight_decay)
 
                 state["t"] = t + 1
+                state["first_moment"] = first_moment
+                state["second_moment"] = second_moment
+        return loss
 
 
 def lr_cosine_schedule(t, alpha_max, alpha_min, t_w, t_c):
@@ -303,6 +326,7 @@ def lr_cosine_schedule(t, alpha_max, alpha_min, t_w, t_c):
     if t > t_c:
         return alpha_min
     return alpha_min + 0.5 * (1 + math.cos((t - t_w) / (t_c - t_w) * math.pi)) * (alpha_max - alpha_min)
+
 
 def clip_grad(params, M, eps=1e-6):
     total_norm = 0
