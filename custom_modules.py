@@ -303,3 +303,18 @@ def lr_cosine_schedule(t, alpha_max, alpha_min, t_w, t_c):
     if t > t_c:
         return alpha_min
     return alpha_min + 0.5 * (1 + math.cos((t - t_w) / (t_c - t_w) * math.pi)) * (alpha_max - alpha_min)
+
+def clip_grad(params, M, eps=1e-6):
+    total_norm = 0
+    for p in params:
+        if p.grad is None:
+            continue
+        grad = p.grad.data
+        total_norm += torch.norm(grad, p=2) ** 2
+    total_norm = math.sqrt(total_norm)
+    if total_norm > M:
+        for p in params:
+            if p.grad is None:
+                continue
+            p.grad.data /= (total_norm + eps)
+            p.grad.data *= M
