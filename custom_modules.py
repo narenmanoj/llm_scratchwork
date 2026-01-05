@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from einops import einsum, rearrange, reduce
 from jaxtyping import Float, Int
 import math
@@ -19,7 +19,7 @@ def _default_init(num_rows, num_cols, device=None, dtype=None) -> torch.Tensor:
         rand_tensor = torch.randn(num_rows, num_cols, device=device, dtype=dtype)
     else:
         rand_tensor = torch.randn(num_rows, device=device, dtype=dtype)
-    return torch.clamp(rand_tensor, min=-trunc_up,max=trunc_up)
+    return torch.clamp(rand_tensor, min=-trunc_up, max=trunc_up)
 
 
 def silu(x: torch.Tensor) -> torch.Tensor:
