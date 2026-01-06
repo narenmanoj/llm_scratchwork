@@ -96,7 +96,7 @@ if __name__ == "__main__":
     print(next(model.parameters()).device)
 
     for epoch_it in tqdm(range(hyperparams["num_epochs"])):
-        train_one_epoch(epoch_index=0,
+        train_one_epoch(epoch_index=epoch_it,
                         num_epochs=hyperparams["num_epochs"],
                         tb_writer=tb_writer,
                         loss_fn=loss_fn,
