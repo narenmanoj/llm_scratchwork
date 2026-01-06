@@ -128,10 +128,10 @@ class RotaryPositionalEmbedding(torch.nn.Module):
 
         cosine_result = einsum(x,
                                relevant_cosines,
-                               "... seq d_k, ... seq d_k -> ... seq d_k")
+                               "batch ... seq d_k, batch seq d_k -> batch ... seq d_k")
         sine_result = einsum(x_flip,
                              relevant_sines,
-                             "... seq d_k, ... seq d_k -> ... seq d_k")
+                             "batch ... seq d_k, batch seq d_k -> batch ... seq d_k")
         return cosine_result + sine_result
 
 

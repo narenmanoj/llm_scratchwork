@@ -93,4 +93,5 @@ if __name__ == "__main__":
                         tb_writer=tb_writer,
                         loss_fn=loss_fn,
                         optimizer=optimizer,
-                        model=model)
+                        model=model,
+                        dataloader=dataloader)
