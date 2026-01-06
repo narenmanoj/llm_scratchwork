@@ -274,22 +274,8 @@ def cross_entropy(
     inputs: Float[torch.Tensor, " batch_size vocab_size"], targets: Int[torch.Tensor, " batch_size"]
 ) -> Float[torch.Tensor, ""]:
     inputs_demaxed = _subtract_max(inputs, dim=-1)
-    log_sum_exps = torch.log(torch.exp(inputs_demaxed).sum(dim=-1))
-
-    targets_blown = targets.reshape((len(targets), 1))
-    # sum_vals = inputs_demaxed.gather(dim=1, index=targets_blown)
-    return torch.gather(input=inputs_demaxed - log_sum_exps, dim=-1, index=targets_blown)
-#     return -torch.mean(sum_vals.flatten() - log_sum_exps)
-# def log_softmax(x, dim=-1):
-#     x_max = torch.max(x, dim=dim, keepdim=True)[0]
-#     x = x - x_max
-#     return x - torch.log(torch.sum(torch.exp(x), dim=dim, keepdim=True))
-
-
-# def cross_entropy(inputs, targets):
-#     negative_log_softmax_logits = -log_softmax(inputs)
-#     breakpoint()
-#     return torch.mean(torch.gather(negative_log_softmax_logits, -1, targets.unsqueeze(-1)))
+    log_sum_exps = inputs_demaxed - torch.log(torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True))
+    return -torch.mean(torch.gather(log_sum_exps, -1, targets.unsqueeze(-1)))
 
 
 class AdamW(torch.optim.Optimizer):
