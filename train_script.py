@@ -11,7 +11,7 @@ from custom_modules import (
     cross_entropy,
 )
 
-def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, model, dataloader):
+def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, model, dataloader, print_every=100):
     running_loss = 0.
     last_loss = 0.
 
@@ -40,8 +40,8 @@ def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, mode
 
         # Gather data and report
         running_loss += loss.item()
-        if i % 1000 == 999:
-            last_loss = running_loss / 1000 # loss per batch
+        if i % print_every == print_every - 1:
+            last_loss = running_loss / print_every # loss per batch
             print('  batch {} loss: {}'.format(i + 1, last_loss))
             tb_x = epoch_index * len(dataloader) + i + 1
             tb_writer.add_scalar('Loss/train', last_loss, tb_x)
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         "d_ff": 1344,
         "rope_theta": 1e4,
         "context_length": 256,
-        "num_epochs": 1,
+        "num_epochs": 3,
     }
 
     with open(hyperparams["dataset_file"], "r", encoding="utf-8") as f:
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     print(next(model.parameters()).device)
 
-    for epoch_it in range(hyperparams["num_epochs"]):
+    for epoch_it in tqdm(range(hyperparams["num_epochs"])):
         train_one_epoch(epoch_index=0,
                         num_epochs=hyperparams["num_epochs"],
                         tb_writer=tb_writer,
