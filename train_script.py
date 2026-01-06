@@ -42,9 +42,9 @@ def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, mode
         running_loss += loss.item()
         if i % print_every == print_every - 1:
             last_loss = running_loss / print_every # loss per batch
-            print('  batch {} loss: {}'.format(i + 1, last_loss))
+            print(f"  batch {i + 1} loss: {last_loss}")
             tb_x = epoch_index * len(dataloader) + i + 1
-            tb_writer.add_scalar('Loss/train', last_loss, tb_x)
+            tb_writer.add_scalar("Loss/train", last_loss, tb_x)
             running_loss = 0.
 
     return last_loss
