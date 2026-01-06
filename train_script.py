@@ -5,9 +5,6 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
-
 from custom_modules import (
     TransformerLM,
     AdamW,
@@ -53,11 +50,12 @@ def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, mode
     return last_loss
 
 if __name__ == "__main__":
-    with open("the-verdict.txt", "r", encoding="utf-8") as f:
-        raw_text = f.read()
-    tokenizer = tiktoken.get_encoding("gpt2")
-    tokenizer.encode(raw_text, allowed_special={"<|endoftext|>"})
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device = {device}")
+
+    # eventually read this from a config file
     hyperparams = {
+        "dataset_file": "the-verdict.txt",
         "d_model": 512,
         "num_layers": 4,
         "num_heads": 16,
@@ -66,6 +64,11 @@ if __name__ == "__main__":
         "context_length": 256,
         "num_epochs": 1,
     }
+
+    with open(hyperparams["dataset_file"], "r", encoding="utf-8") as f:
+        raw_text = f.read()
+    tokenizer = tiktoken.get_encoding("gpt2")
+    tokenizer.encode(raw_text, allowed_special={"<|endoftext|>"})
 
     vocab_size = tokenizer.n_vocab
 
