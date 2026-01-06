@@ -3,6 +3,7 @@ from datetime import datetime
 import tiktoken
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -13,14 +14,17 @@ from custom_modules import (
     cross_entropy,
 )
 
-def train_one_epoch(epoch_index, tb_writer, loss_fn, optimizer, model, dataloader):
+def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, model, dataloader):
     running_loss = 0.
     last_loss = 0.
+
+    pbar = tqdm(enumerate(dataloader), total=len(dataloader), 
+                desc=f"Epoch {epoch_index+1}/{num_epochs}", leave=True)
 
     # Here, we use enumerate(training_loader) instead of
     # iter(training_loader) so that we can track the batch
     # index and do some intra-epoch reporting
-    for i, data in enumerate(dataloader):
+    for i, data in pbar:
         # Every data instance is an input + label pair
         inputs, labels = data
 
@@ -90,6 +94,7 @@ if __name__ == "__main__":
 
     for epoch_it in range(hyperparams["num_epochs"]):
         train_one_epoch(epoch_index=0,
+                        num_epochs=hyperparams["num_epochs"],
                         tb_writer=tb_writer,
                         loss_fn=loss_fn,
                         optimizer=optimizer,
