@@ -42,7 +42,7 @@ class ShiftedCausalLMDataset(Dataset):
         # -------------------------
         if os.path.exists(self.cache_path):
             print(f"Loading tokenized dataset from {self.cache_path}")
-            self.dataset_data = torch.load(self.cache_path)  # list of dicts with 'input_ids'
+            self.dataset_data = torch.load(self.cache_path, weights_only=False)  # list of dicts with 'input_ids'
             return
 
         # -------------------------
