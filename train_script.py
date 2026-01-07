@@ -1,4 +1,5 @@
 import argparse
+from dataset_prepare import build_dataset   # wherever you placed it
 from GPTDatasetV1 import GPTDatasetV1
 from datetime import datetime
 import json
@@ -6,8 +7,12 @@ import os
 from pathlib import Path
 import tiktoken
 import torch
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+
+
+
 
 from custom_modules import (
     TransformerLM,
@@ -47,21 +52,21 @@ def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, mode
     # iter(training_loader) so that we can track the batch
     # index and do some intra-epoch reporting
     for i, data in pbar:
-        # Every data instance is an input + label pair
-        inputs, labels = data
+        inputs = data["input_ids"].to(device)
+        labels = data["labels"].to(device)
 
-        # Zero your gradients for every batch!
         optimizer.zero_grad()
 
-        # Make predictions for this batch
-        outputs = model(inputs)
+        outputs = model(inputs)  # (B, S, V)
 
-        # Compute the loss and its gradients
-        loss = loss_fn(outputs, labels)
+        loss = loss_fn(
+            outputs.reshape(-1, outputs.size(-1)),
+            labels.reshape(-1),
+        )
+
         loss.backward()
-
-        # Adjust learning weights
         optimizer.step()
+
 
         # Gather data and report
         running_loss += loss.item()
@@ -93,7 +98,7 @@ if __name__ == "__main__":
 
     if len(args.config) > 0:
         hyperparams = read_json_to_dict(args.config)
-        dataset_name = hyperparams["dataset_file"].split(".")[0]
+        dataset_name = hyperparams["dataset_name"].split(".")[0]
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         logdir = f"runs/{dataset_name}/{timestamp}"
         config_filename = f"{logdir}/config.json"
@@ -105,19 +110,23 @@ if __name__ == "__main__":
         epoch_index = args.load_checkpoint.rsplit("/", 1)[1]
         hyperparams = read_json_to_dict(Path(f"{logdir}/config.json"))
 
-    with open(hyperparams["dataset_file"], "r", encoding="utf-8") as f:
-        raw_text = f.read()
     tokenizer = tiktoken.get_encoding("gpt2")
-    tokenizer.encode(raw_text, allowed_special={"<|endoftext|>"})
 
     vocab_size = tokenizer.n_vocab
 
-    dataloader = GPTDatasetV1.create_dataloader(raw_text,
-                                                batch_size=hyperparams.get("batch_size", 8),
-                                                shuffle=False,
-                                                stride=1,
-                                                max_length=hyperparams["context_length"],
-                                                device=device)
+    dataset = build_dataset(
+        name=hyperparams["dataset_name"],   # e.g. "tinystories" or "openwebtext"
+        seq_len=hyperparams["context_length"],
+        split="train",
+    )
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=hyperparams.get("batch_size", 8),
+        shuffle=True,
+        num_workers=4,
+        pin_memory=(device.type == "cuda"),
+    )
     
     model = TransformerLM(vocab_size=vocab_size, 
                         context_length=hyperparams["context_length"],

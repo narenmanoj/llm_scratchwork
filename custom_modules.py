@@ -285,11 +285,35 @@ class TransformerLM(torch.nn.Module):
 
 
 def cross_entropy(
-    inputs: Float[torch.Tensor, " batch_size vocab_size"], targets: Int[torch.Tensor, " batch_size"]
-) -> Float[torch.Tensor, ""]:
+    inputs: torch.Tensor,    # (N, vocab_size)
+    targets: torch.Tensor,   # (N,)
+    ignore_index: int = -100,
+) -> torch.Tensor:
+    """
+    Numerically stable cross entropy with padding ignore.
+
+    inputs: logits (N, V)
+    targets: target indices (N,)
+    """
+    # Mask out ignored targets
+    valid_mask = targets != ignore_index
+    if valid_mask.sum() == 0:
+        return torch.tensor(0.0, device=inputs.device, requires_grad=True)
+
+    inputs = inputs[valid_mask]
+    targets = targets[valid_mask]
+
+    # LogSoftmax (numerically stable)
     inputs_demaxed = _subtract_max(inputs, dim=-1)
-    log_sum_exps = inputs_demaxed - torch.log(torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True))
-    return -torch.mean(torch.gather(log_sum_exps, -1, targets.unsqueeze(-1)))
+    log_probs = inputs_demaxed - torch.log(
+        torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True)
+    )
+
+    # Negative log likelihood
+    nll = -torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+
+    return nll.mean()
+
 
 
 class AdamW(torch.optim.Optimizer):
