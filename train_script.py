@@ -113,7 +113,7 @@ if __name__ == "__main__":
     vocab_size = tokenizer.n_vocab
 
     dataloader = GPTDatasetV1.create_dataloader(raw_text,
-                                                batch_size=8,
+                                                batch_size=hyperparams.get("batch_size", 8),
                                                 shuffle=False,
                                                 stride=1,
                                                 max_length=hyperparams["context_length"],
