@@ -41,7 +41,26 @@ def read_json_to_dict(filename):
         return None
 
 
-def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, model, dataloader, logdir, print_every=100):
+@torch.no_grad()
+def validate(model, dataloader, loss_fn, device):
+    model.eval()
+    total_loss = 0.0
+    count = 0
+    for batch in dataloader:
+        inputs = batch["input_ids"].to(device)
+        labels = batch["labels"].to(device)
+
+        outputs = model(inputs)
+        loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), labels.reshape(-1))
+
+        total_loss += loss.item() * inputs.size(0)
+        count += inputs.size(0)
+    model.train()
+    return total_loss / count
+
+
+
+def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, model, dataloader, logdir, device, val_dataloader=None, print_every=100):
     running_loss = 0.
     last_loss = 0.
 
@@ -76,6 +95,13 @@ def train_one_epoch(epoch_index, num_epochs, tb_writer, loss_fn, optimizer, mode
             tb_x = epoch_index * len(dataloader) + i + 1
             tb_writer.add_scalar("Loss/train", last_loss, tb_x)
             running_loss = 0.
+            # -------------------------
+            # Validation step
+            # -------------------------
+            if val_dataloader is not None:
+                val_loss = validate(model, val_dataloader, loss_fn, device)
+                tqdm.write(f"  batch {i + 1} validation loss: {val_loss:.4f}")
+                tb_writer.add_scalar("Loss/validation", val_loss, tb_x)
     torch.save({
         EPOCH_KEY: epoch_index,
         MODEL_STATE_KEY: model.state_dict(),
@@ -120,6 +146,21 @@ if __name__ == "__main__":
         split="train",
     )
 
+    # Validation dataset
+    val_dataset = build_dataset(
+        name=hyperparams["dataset_name"],
+        seq_len=hyperparams["context_length"],
+        split="validation",  # validation split
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=hyperparams.get("batch_size", 8),
+        shuffle=False,  # no shuffle for validation
+        num_workers=4,
+        pin_memory=(device.type == "cuda"),
+    )
+
     dataloader = DataLoader(
         dataset,
         batch_size=hyperparams.get("batch_size", 8),
@@ -161,6 +202,7 @@ if __name__ == "__main__":
                         optimizer=optimizer,
                         model=model,
                         dataloader=dataloader,
+                        device=device,
                         logdir=logdir)
     test_messages = [
         "test text",
