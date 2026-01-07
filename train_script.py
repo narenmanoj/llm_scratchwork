@@ -203,6 +203,7 @@ if __name__ == "__main__":
                         model=model,
                         dataloader=dataloader,
                         device=device,
+                        val_dataloader=val_dataloader,
                         logdir=logdir)
     test_messages = [
         "test text",
