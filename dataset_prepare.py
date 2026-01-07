@@ -42,7 +42,7 @@ class ShiftedCausalLMDataset(Dataset):
         # -------------------------
         if os.path.exists(self.cache_path):
             print(f"Loading tokenized dataset from {self.cache_path}")
-            self.dataset = torch.load(self.cache_path)
+            self.dataset_data = torch.load(self.cache_path)  # list of dicts with 'input_ids'
             return
 
         # -------------------------
@@ -57,55 +57,50 @@ class ShiftedCausalLMDataset(Dataset):
         else:
             raise ValueError(f"Unsupported dataset {dataset_name}")
 
-        self.dataset = load_dataset(hf_name, split=split, streaming=streaming)
+        dataset = load_dataset(hf_name, split=split, streaming=streaming)
 
-        if not streaming:
-            # -------------------------
-            # 5️⃣ Pre-tokenize dataset
-            # -------------------------
-            self.dataset = self.dataset.map(
-                lambda batch: self._tokenize(batch, text_field),
-                batched=True,
-                remove_columns=self.dataset.column_names,
-            )
-            self.dataset.set_format(type="python")
+        if streaming:
+            raise ValueError("Streaming mode not supported with caching")
 
-            # -------------------------
-            # 6️⃣ Save automatically to cache
-            # -------------------------
-            print(f"Saving tokenized dataset to {self.cache_path}")
-            torch.save(self.dataset, self.cache_path)
+        # -------------------------
+        # 5️⃣ Pre-tokenize and flatten dataset
+        # -------------------------
+        tokenized_list = []
+        for item in dataset:
+            texts = [item[text_field]]
+            if self.add_eos:
+                texts = [t + self.tokenizer.eos_token for t in texts]
 
-    # -------------------------
-    # Helper: tokenize + chunk long texts
-    # -------------------------
-    def _tokenize(self, batch, text_field):
-        texts = batch[text_field]
-        if self.add_eos:
-            texts = [t + self.tokenizer.eos_token for t in texts]
+            for t in texts:
+                # Chunk very long texts
+                for i in range(0, len(t), self.max_chunk_len):
+                    chunk = t[i:i + self.max_chunk_len]
+                    encodings = self.tokenizer(
+                        chunk,
+                        truncation=False,
+                        add_special_tokens=False,
+                        max_length=None,
+                    )
+                    tokenized_list.append({"input_ids": encodings["input_ids"]})
 
-        all_chunks = []
-        for t in texts:
-            for i in range(0, len(t), self.max_chunk_len):
-                all_chunks.append(t[i:i + self.max_chunk_len])
+        # Save for fast reload
+        print(f"Saving tokenized dataset to {self.cache_path}")
+        torch.save(tokenized_list, self.cache_path)
 
-        encodings = self.tokenizer(
-            all_chunks,
-            truncation=False,
-            add_special_tokens=False,
-            max_length=None,
-        )
-        return encodings
+        self.dataset_data = tokenized_list
 
     # -------------------------
     # Dataset interface
     # -------------------------
     def __len__(self):
-        return len(self.dataset)
+        return len(self.dataset_data)
 
     def __getitem__(self, idx):
-        tokens = self.dataset[idx]["input_ids"]
+        tokens = self.dataset_data[idx]["input_ids"]
 
+        # -------------------------
+        # Slice sequence for input/label
+        # -------------------------
         if len(tokens) >= self.seq_len + 1:
             start = torch.randint(0, len(tokens) - self.seq_len, (1,)).item()
             window = tokens[start:start + self.seq_len + 1]
@@ -115,6 +110,10 @@ class ShiftedCausalLMDataset(Dataset):
 
         input_ids = torch.tensor(window[:-1], dtype=torch.long)
         labels = torch.tensor(window[1:], dtype=torch.long)
+
+        # -------------------------
+        # Mask padding labels
+        # -------------------------
         labels[labels == self.pad_token_id] = IGNORE_INDEX
 
         return {"input_ids": input_ids, "labels": labels}
@@ -123,14 +122,13 @@ class ShiftedCausalLMDataset(Dataset):
 # -------------------------
 # Factory function
 # -------------------------
-def build_dataset(name: str, seq_len: int, split: str = "train", streaming: bool = False):
+def build_dataset(name: str, seq_len: int, split: str = "train"):
     name = name.lower()
     if name in ["tinystories", "openwebtext"]:
         return ShiftedCausalLMDataset(
             dataset_name=name,
             split=split,
             seq_len=seq_len,
-            streaming=streaming,
             cache_dir="data",  # automatically store in data/
         )
     else:
