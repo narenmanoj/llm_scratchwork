@@ -1,19 +1,14 @@
 import argparse
-from dataset_prepare import build_dataset   # wherever you placed it
-from GPTDatasetV1 import GPTDatasetV1
+from dataset_prepare import build_dataset
 from datetime import datetime
 import json
 import os
 from pathlib import Path
-import random
 import tiktoken
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-
-
-
 
 from custom_modules import (
     TransformerLM,

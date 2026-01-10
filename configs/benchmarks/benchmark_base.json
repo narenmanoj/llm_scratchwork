@@ -1,0 +1,13 @@
+{
+    "dataset_name": "benchmark",
+    "d_model": 768,
+    "num_layers": 12,
+    "num_heads": 12,
+    "d_ff": 3072,
+    "rope_theta": 1e4,
+    "context_length": 256,
+    "batch_size": 4,
+    "vocab_size": 10000,
+    "num_warmups": 5,
+    "num_measurements": 10
+}
