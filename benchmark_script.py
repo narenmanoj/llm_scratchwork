@@ -61,9 +61,10 @@ if __name__ == "__main__":
         model(test_sample)
 
     ## Measurement phase
+    setup_stmt = "from __main__ import forward_pass"
     time_stmt = "forward_pass(data=test_sample, model=model, use_cuda=use_cuda)"
     execution_time = timeit.repeat(stmt=time_stmt,
-                                   setup="pass",
+                                   setup=setup_stmt,
                                    repeat=hyperparams["num_measurements"],
                                    number=1)
     print(f"Execution times: {execution_time}")
