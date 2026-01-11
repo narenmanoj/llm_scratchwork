@@ -38,7 +38,7 @@ def train_step(data: torch.Tensor,
     with nvtx.range("backwards pass"):
         loss.backward()
     if optimizer:
-        with nvtx.range("optimzier step"):
+        with nvtx.range("optimizer step"):
             optimizer.step()
     if use_cuda:
         torch.cuda.synchronize()
@@ -85,7 +85,7 @@ if __name__ == "__main__":
             torch.cuda.synchronize()
 
     ## Measurement phase
-    setup_stmt = "from __main__ import forward_pass"
+    setup_stmt = "from __main__ import train_step"
     main_stmt = partial(train_step,
                         data=test_sample,
                         labels=test_label,
