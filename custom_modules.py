@@ -162,7 +162,7 @@ def scaled_dot_product_attention(query: torch.Tensor,
 
 
 class MultiheadAttention(torch.nn.Module):
-    def __init__(self, embed_dim, num_heads, rope=None, device=None):
+    def __init__(self, embed_dim, num_heads, rope=None, device=None, max_seq_len=None):
         super(MultiheadAttention, self).__init__()
         self.d_k = int(embed_dim / num_heads)
         self.num_heads = num_heads
@@ -172,6 +172,13 @@ class MultiheadAttention(torch.nn.Module):
         self.W_V = Linear(in_features=embed_dim, out_features=self.out_dim, device=device)
         self.W_O = Linear(in_features=self.out_dim, out_features=embed_dim, device=device)
         self.rope = rope
+        self.max_seq_len = max_seq_len
+        if max_seq_len:
+            self.mask = torch.tril(
+                torch.ones(max_seq_len, max_seq_len, device=device)
+            )
+        else:
+            self.mask = None
     
     def forward(self, x: torch.Tensor, is_causal=False, token_positions=None) -> torch.Tensor:
         batch_size = x.shape[0]
@@ -197,8 +204,10 @@ class MultiheadAttention(torch.nn.Module):
             query = self.rope(query, token_positions)
             key = self.rope(key, token_positions)
         # call scaled_dot_product_attention on the output with the causal mask
-        if is_causal:
-            seq_len = x.shape[1]
+        seq_len = x.shape[1]
+        if is_causal and self.max_seq_len is not None:
+            mask = self.mask[:seq_len, :seq_len]
+        elif is_causal:
             mask = torch.tril(
                 torch.ones(seq_len, seq_len, device=x.device)
             )
@@ -228,7 +237,9 @@ class PreNormTransformer(torch.nn.Module):
                                               max_seq_len=max_seq_len,
                                               device=device)
         self.mha = MultiheadAttention(embed_dim=d_model,
-                                      num_heads=num_heads,rope=self.rope,
+                                      num_heads=num_heads,
+                                      rope=self.rope,
+                                      max_seq_len=max_seq_len,
                                       device=device)
         self.swiglu = SwiGLU(d_model=d_model, d_ff=d_ff, device=device)
 
