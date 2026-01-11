@@ -205,16 +205,15 @@ class MultiheadAttention(torch.nn.Module):
             query = self.rope(query, token_positions)
             key = self.rope(key, token_positions)
         # call scaled_dot_product_attention on the output with the causal mask
-        with nvtx.range("getting the causal mask"):
-            seq_len = x.shape[1]
-            if is_causal and self.max_seq_len is not None:
-                mask = self.mask[:seq_len, :seq_len]
-            elif is_causal:
-                mask = torch.tril(
-                    torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool)
-                )
-            else:
-                mask = None
+        seq_len = x.shape[1]
+        if is_causal and self.max_seq_len is not None:
+            mask = self.mask[:seq_len, :seq_len]
+        elif is_causal:
+            mask = torch.tril(
+                torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool)
+            )
+        else:
+            mask = None
         attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
         attn = rearrange(attn, "batch h seq_k d_k -> batch seq_k h d_k")
         attn = rearrange(attn, "batch seq_k h d_k -> batch seq_k (h d_k)")
