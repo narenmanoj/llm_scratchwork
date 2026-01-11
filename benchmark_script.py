@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+from functools import partial
 import os
 from pathlib import Path
 import timeit
@@ -16,12 +17,20 @@ from train_script import read_json_to_dict
 
 def generate_batch(vocab_size: int, batch_size: int, seq_len: int) -> torch.Tensor:
     data = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len))
-    return data
+    labels = data[:, 1:]
+    new_labels = torch.randint(low=0, high=vocab_size, size=(batch_size, 1))
+    labels = torch.cat((labels, new_labels), dim=1)
+    return data, labels
 
-def forward_pass(data: torch.Tensor, model: torch.nn.Module, use_cuda: bool) -> torch.Tensor:
+def forward_pass(data: torch.Tensor, labels: torch.Tensor, model: torch.nn.Module, use_cuda: bool) -> torch.Tensor:
+    outputs = model(data)
+    loss = cross_entropy(
+        outputs.reshape(-1, outputs.size(-1)),
+        labels.reshape(-1),
+    )
+    loss.backward()
     if use_cuda:
         torch.cuda.synchronize()
-    model(data)
 
 if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
@@ -52,18 +61,20 @@ if __name__ == "__main__":
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total number of parameters: {total_params}")
 
-    test_sample = generate_batch(vocab_size=vocab_size,
+    test_sample, test_label = generate_batch(vocab_size=vocab_size,
                                  batch_size=batch_size,
                                  seq_len=context_length)
     
     ## Warmup phase
     for warmup_idx in range(hyperparams["num_warmups"]):
         model(test_sample)
+    if use_cuda:
+        torch.cuda.synchronize()
 
     ## Measurement phase
     setup_stmt = "from __main__ import forward_pass"
-    time_stmt = "forward_pass(data=test_sample, model=model, use_cuda=use_cuda)"
-    execution_time = timeit.repeat(stmt=time_stmt,
+    main_stmt = partial(forward_pass, data=test_sample, labels=test_label, model=model, use_cuda=use_cuda)
+    execution_time = timeit.repeat(stmt=main_stmt,
                                    setup=setup_stmt,
                                    repeat=hyperparams["num_measurements"],
                                    number=1)

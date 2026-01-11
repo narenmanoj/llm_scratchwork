@@ -1,5 +1,5 @@
 {
-    "dataset_name": "benchmark_medium",
+    "dataset_name": "benchmark_large",
     "d_model": 1280,
     "num_layers": 36,
     "num_heads": 20,

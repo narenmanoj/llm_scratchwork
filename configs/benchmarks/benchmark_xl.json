@@ -1,5 +1,5 @@
 {
-    "dataset_name": "benchmark_medium",
+    "dataset_name": "benchmark_xl",
     "d_model": 1600,
     "num_layers": 48,
     "num_heads": 25,
