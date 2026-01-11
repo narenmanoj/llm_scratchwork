@@ -288,6 +288,7 @@ class TransformerLM(torch.nn.Module):
             return out_indices
 
 
+@nvtx.range("cross entropy")
 def cross_entropy(
     inputs: torch.Tensor,    # (N, vocab_size)
     targets: torch.Tensor,   # (N,)
@@ -299,23 +300,22 @@ def cross_entropy(
     inputs: logits (N, V)
     targets: target indices (N,)
     """
-    with nvtx.range("cross entropy"):
-        # Mask out ignored targets
-        valid_mask = targets != ignore_index
-        if valid_mask.sum() == 0:
-            return torch.tensor(0.0, device=inputs.device, requires_grad=True)
+    # Mask out ignored targets
+    valid_mask = targets != ignore_index
+    if valid_mask.sum() == 0:
+        return torch.tensor(0.0, device=inputs.device, requires_grad=True)
 
-        inputs = inputs[valid_mask]
-        targets = targets[valid_mask]
+    inputs = inputs[valid_mask]
+    targets = targets[valid_mask]
 
-        # LogSoftmax (numerically stable)
-        inputs_demaxed = _subtract_max(inputs, dim=-1)
-        log_probs = inputs_demaxed - torch.log(
-            torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True)
-        )
+    # LogSoftmax (numerically stable)
+    inputs_demaxed = _subtract_max(inputs, dim=-1)
+    log_probs = inputs_demaxed - torch.log(
+        torch.sum(torch.exp(inputs_demaxed), dim=-1, keepdim=True)
+    )
 
-        # Negative log likelihood
-        nll = -torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+    # Negative log likelihood
+    nll = -torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
 
     return nll.mean()
 
