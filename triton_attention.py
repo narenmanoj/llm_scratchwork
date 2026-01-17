@@ -1,3 +1,4 @@
+from einops import einsum, reduce
 import math
 import torch
 import triton
@@ -70,11 +71,50 @@ class PyTorchFlashAttention(torch.autograd.Function):
         scale = math.sqrt(D)
         N_QUERIES = query.shape[-2]
         N_KEYS = key.shape[-2]
-        lse = None
-        output = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=None)
-        
-        to_save = [lse, query, key, value, output]
-    
+
+        N_TILES_Q = math.ceil(N_QUERIES / ctx.Q_TILE_SIZE)
+        N_TILES_KV = math.ceil(N_KEYS / ctx.K_TILE_SIZE)
+        O_list = []
+        L_list = []
+        for i in range(N_TILES_Q):
+            # load Q_i from global memory
+            lower_ptr_q = i * ctx.Q_TILE_SIZE
+            upper_ptr_q = min(N_QUERIES, (i + 1) * ctx.Q_TILE_SIZE)
+            Q_i = query[..., lower_ptr_q : upper_ptr_q, :]
+            # initialize O_i^{(0)} = 0 \in \R^{B_q \times d}, \ell_i^{(0)} = 0 \in \R^{B_q}, m_{i}^{(0)} = -\infty \in \R^{B_q}
+            m_shape = Q_i.shape[:-1]
+            m_i = -torch.full(m_shape, float("inf"))
+            l_i = torch.zeros(m_shape)
+            O_i = torch.zeros(Q_i.shape)
+            for j in range(N_TILES_KV):
+                # load K^{(j)} and V^{(j)} from global memory
+                lower_ptr_k = j * ctx.K_TILE_SIZE
+                upper_ptr_k = min(N_KEYS, (j + 1) * ctx.K_TILE_SIZE)
+                K_j = key[..., lower_ptr_k : upper_ptr_k, :]
+                V_j = value[..., lower_ptr_k : upper_ptr_k, :]
+                scores = einsum(Q_i, K_j, "batch ... seq_q d_model, batch ... seq_k d_model -> batch ... seq_q seq_k")
+                scores *= (D ** -0.5)
+                rowmax = torch.amax(scores, dim=-1)
+                m_i_new = torch.max(m_i, rowmax)
+                m_i_new_blown = m_i_new.unsqueeze(-1).expand_as(scores)
+                P_i = torch.exp(scores - m_i_new_blown)
+                P_i_rowsum = reduce(P_i, "batch ... seq_q seq_k -> batch ... seq_q", "sum")
+                exp_mi_diff = torch.exp(m_i - m_i_new)
+                l_i = einsum(exp_mi_diff, l_i, "batch ... seq_q, batch ... seq_q -> batch ... seq_q") + P_i_rowsum
+                O_i = (einsum(torch.diag_embed(exp_mi_diff), O_i, "batch ... seq_q_1 seq_q_2, batch ... seq_q_2 d_model -> batch ... seq_q_1 d_model") + 
+                       einsum(P_i, V_j, "batch ... seq_q seq_k, batch ... seq_k d_model -> batch ... seq_q d_model"))
+                m_i = m_i_new
+            O_i = einsum((torch.diag_embed(l_i ** -1)), O_i, "batch ... seq_q_1 seq_q_2, batch ... seq_q_2 d_model -> batch ... seq_q_1 d_model")
+            L_i = m_i + torch.log(l_i)
+            O_list.append(O_i)
+            L_list.append(L_i)
+        O = torch.cat(O_list, dim=1)
+        L = torch.cat(L_list, dim=1)
+        to_save = [L, query, key, value, O]
+        ctx.save_for_backward(*to_save)
+        return O
+
+
     @staticmethod
     def backward(ctx, grad_out):
         raise NotImplementedError
