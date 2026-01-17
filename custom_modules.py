@@ -139,6 +139,7 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         sine_result = einsum(x_flip, relevant_sines, einsum_str)
         return cosine_result + sine_result
 
+
 @nvtx.range("scaled dot product attention")
 def scaled_dot_product_attention(query: torch.Tensor,
                                  key: torch.Tensor,
