@@ -119,17 +119,39 @@ def flash_fwd_kernel(
         block_shape=(Q_TILE_SIZE, D),
         order=(1, 0),
     )
-    for j in tl.range(N_TILES_KV):
+    L_block_ptr = tl.make_block_ptr(
+        L_ptr + batch_index * stride_lb,
+        shape=(N_QUERIES,),
+        strides=(stride_lq,),
+        offsets=(query_tile_index * Q_TILE_SIZE,),
+        block_shape=(Q_TILE_SIZE,),
+        order=(0,),
+    )
+    Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero")
+    m_i = tl.full((Q_TILE_SIZE,), -float("inf"), tl.float32)
+    l_i = tl.full((Q_TILE_SIZE,), 0.0, tl.float32)
+    for j in tl.static_range(0, N_TILES_KV):
         # lower_ptr_k = j * ctx.K_TILE_SIZE
         # upper_ptr_k = min(N_KEYS, (j + 1) * ctx.K_TILE_SIZE)
         # K_j = key[..., lower_ptr_k : upper_ptr_k, :]
         # V_j = value[..., lower_ptr_k : upper_ptr_k, :]
         K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
         V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
-
+        scores = tl.dot(Q_i, tl.trans(K_j)) * (D ** -0.5)
+        rowmax = tl.max(scores, axis=-1)
+        m_i_new = tl.maximum(rowmax, m_i)
+        m_i_new_blown = tl.expand_dims(m_i_new, axis=-1)
+        m_i_new_blown = m_i_new_blown + tl.zeros((Q_TILE_SIZE, KV_TILE_SIZE), tl.float32)
+        P_i = tl.exp(scores - m_i_new_blown)
+        P_i_rowsum = tl.sum(P_i, axis=-1)
+        exp_mi_diff = tl.exp(m_i_new - m_i)
+        l_i = P_i_rowsum + exp_mi_diff * l_i
+        # tl.device_print(l_i.shape)
+        m_i = m_i_new
         K_block_ptr = tl.advance(K_block_ptr, (KV_TILE_SIZE, 0))
         V_block_ptr = tl.advance(V_block_ptr, (KV_TILE_SIZE, 0))
     tl.store(O_block_ptr, output, boundary_check=(0, 1))
+    tl.store(L_block_ptr, l_i, boundary_check=(0,))
 
 
 class TritonAttention(torch.autograd.Function):
@@ -147,7 +169,7 @@ class TritonAttention(torch.autograd.Function):
         ctx.N_TILES_KV = math.ceil(ctx.N_KEYS / ctx.KV_TILE_SIZE)
         
         O = torch.empty_like(query)
-        L = torch.empty(query.shape[:-1], device=query.device)
+        L = torch.empty(query.shape[:-1], device=query.device, dtype=torch.float32)
         flash_fwd_kernel[(ctx.N_TILES_Q, ctx.N_BATCHES)](
             query, key, value, O, L,
             query.stride(0), query.stride(1), query.stride(2),
