@@ -6,6 +6,7 @@ import triton.language as tl
 
 from custom_modules import scaled_dot_product_attention
 
+import pdb
 
 class PyTorchFlashAttention(torch.autograd.Function):
     @staticmethod
@@ -75,7 +76,7 @@ def flash_fwd_kernel(
     scale,
     D: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,
-    K_TILE_SIZE: tl.constexpr,
+    KV_TILE_SIZE: tl.constexpr,
     is_causal: tl.constexpr,
 ):
     # Program indices
@@ -92,58 +93,76 @@ def flash_fwd_kernel(
         block_shape=(Q_TILE_SIZE, D),
         order=(1, 0),
     )
-
-    N_TILES_KV = math.ceil(N_KEYS / K_TILE_SIZE)
-
-    # K_block_ptr = tl.make_block_ptr(
-    #     K_ptr + batch_index * stride_kb,
-    #     shape=(N_KEYS, D),
-    #     strides=(stride_kk, stride_kd),
-    #     offsets=(key_tile_index * K_TILE_SIZE, 0),
-    #     block_shape=(K_TILE_SIZE, D),
-    #     order=(1, 0),
-    # )
-
-    # V_block_ptr = tl.make_block_ptr(
-    #     V_ptr + batch_index * stride_vb,
-    #     shape=(N_KEYS, D),
-    #     strides=(stride_vk, stride_vd),
-    #     offsets=(key_tile_index * K_TILE_SIZE, 0),
-    #     block_shape=(K_TILE_SIZE, D),
-    #     order=(1, 0),
-    # )
-
+    K_block_ptr = tl.make_block_ptr(
+        K_ptr + batch_index * stride_kb,
+        shape=(N_KEYS, D),
+        strides=(stride_kk, stride_kd),
+        offsets=(0, 0),
+        block_shape=(KV_TILE_SIZE, D),
+        order=(1, 0),
+    )
+    V_block_ptr = tl.make_block_ptr(
+        V_ptr + batch_index * stride_vb,
+        shape=(N_KEYS, D),
+        strides=(stride_vk, stride_vd),
+        offsets=(0, 0),
+        block_shape=(KV_TILE_SIZE, D),
+        order=(1, 0),
+    )
     output = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
-    for i in range(N_TILES_KV):
-        pass
+    O_block_ptr = tl.make_block_ptr(
+        O_ptr + batch_index * stride_ob,
+        shape=(N_QUERIES, D),
+        strides=(stride_oq, stride_od),
+        offsets=(query_tile_index * Q_TILE_SIZE, 0),
+        block_shape=(Q_TILE_SIZE, D),
+        order=(1, 0),
+    )
+    # tl.device_print("output shape", output.shape)
+    # print(output.shape)
+    # pdb.set_trace()
+    # tl.static_print(N_KEYS)
+    # tl.static_print(K_TILE_SIZE)
+    # print(N_KEYS)
+    N_TILES_KV = tl.cdiv(N_KEYS, K_TILE_SIZE)
+    for j in tl.range(N_TILES_KV):
+        # lower_ptr_k = j * ctx.K_TILE_SIZE
+        # upper_ptr_k = min(N_KEYS, (j + 1) * ctx.K_TILE_SIZE)
+        # K_j = key[..., lower_ptr_k : upper_ptr_k, :]
+        # V_j = value[..., lower_ptr_k : upper_ptr_k, :]
+        K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
+        V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
-    raise NotImplementedError
+        K_block_ptr = tl.advance(K_block_ptr, (K_TILE_SIZE, 0))
+        V_block_ptr = tl.advance(V_block_ptr, (K_TILE_SIZE, 0))
+    tl.store(O_block_ptr, output, boundary_check=(0, 1))
+
 
 class TritonAttention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, query, key, value, is_causal=False):
         ctx.Q_TILE_SIZE = 16
-        ctx.K_TILE_SIZE = 16
-        D = query.shape[-1]
-        scale = math.sqrt(D)
-        N_BATCHES = query.shape[:-2]
-        N_QUERIES = query.shape[-2]
-        N_KEYS = key.shape[-2]
-
-        ctx.N_TILES_Q = math.ceil(N_QUERIES / ctx.Q_TILE_SIZE)
+        ctx.KV_TILE_SIZE = 16
+        ctx.D = query.shape[-1]
+        ctx.scale = math.sqrt(ctx.D)
+        ctx.N_BATCHES = query.shape[0]
+        ctx.N_QUERIES = query.shape[-2]
+        ctx.N_KEYS = key.shape[-2]
+        ctx.N_TILES_Q = math.ceil(ctx.N_QUERIES / ctx.Q_TILE_SIZE)
+        ctx.is_causal = is_causal
         
         O = torch.empty_like(query)
-        L = torch.empty(query.shape[:-1])
-        flash_fwd_kernel[(ctx.N_TILES_Q, N_BATCHES)](
+        L = torch.empty(query.shape[:-1], device=query.device)
+        flash_fwd_kernel[(ctx.N_TILES_Q, ctx.N_BATCHES)](
             query, key, value, O, L,
             query.stride(0), query.stride(1), query.stride(2),
             key.stride(0), key.stride(1), key.stride(2),
             value.stride(0), value.stride(1), value.stride(2),
             O.stride(0), O.stride(1), O.stride(2),
             L.stride(0), L.stride(1),
-            N_QUERIES, N_KEYS,
-            scale, D, ctx.Q_TILE_SIZE, ctx.K_TILE_SIZE,
-            is_causal
+            ctx.N_QUERIES, ctx.N_KEYS, ctx.scale,
+            D=ctx.D, Q_TILE_SIZE=ctx.Q_TILE_SIZE, KV_TILE_SIZE=ctx.KV_TILE_SIZE,
+            is_causal=ctx.is_causal
         )
         to_save = [L, query, key, value, O]
         ctx.save_for_backward(*to_save)
