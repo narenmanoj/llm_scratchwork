@@ -23,7 +23,6 @@ def flash_fwd_kernel(
     # Program indices
     query_tile_index = tl.program_id(0)
     batch_index = tl.program_id(1)
-    key_tile_index = tl.program_id(2)
 
     # Offset each pointer with the corresponding batch index
     # multiplied with the batch stride for each tensor
@@ -36,39 +35,57 @@ def flash_fwd_kernel(
         order=(1, 0),
     )
 
-    K_block_ptr = tl.make_block_ptr(
-        K_ptr + batch_index * stride_kb,
-        shape=(N_KEYS, D),
-        strides=(stride_kk, stride_kd),
-        offsets=(key_tile_index * K_TILE_SIZE, 0),
-        block_shape=(K_TILE_SIZE, D),
-        order=(1, 0),
-    )
+    # K_block_ptr = tl.make_block_ptr(
+    #     K_ptr + batch_index * stride_kb,
+    #     shape=(N_KEYS, D),
+    #     strides=(stride_kk, stride_kd),
+    #     offsets=(key_tile_index * K_TILE_SIZE, 0),
+    #     block_shape=(K_TILE_SIZE, D),
+    #     order=(1, 0),
+    # )
 
-    V_block_ptr = tl.make_block_ptr(
-        V_ptr + batch_index * stride_vb,
-        shape=(N_KEYS, D),
-        strides=(stride_vk, stride_vd),
-        offsets=(key_tile_index * K_TILE_SIZE, 0),
-        block_shape=(K_TILE_SIZE, D),
-        order=(1, 0),
-    )
+    # V_block_ptr = tl.make_block_ptr(
+    #     V_ptr + batch_index * stride_vb,
+    #     shape=(N_KEYS, D),
+    #     strides=(stride_vk, stride_vd),
+    #     offsets=(key_tile_index * K_TILE_SIZE, 0),
+    #     block_shape=(K_TILE_SIZE, D),
+    #     order=(1, 0),
+    # )
+
+    output = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
 
     raise NotImplementedError
 
-class PyTorchFlashAttention(torch.autograd.Function):
+class TritonAttention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, is_causal: bool=False):
-        # assert query.is_cuda, "Expected query is cuda"
-        # assert key.is_cuda, "Expected key is cuda"
-        # assert value.is_cuda, "Expected value is cuda"
-        # if attn_mask is not None:
-        #     assert attn_mask.is_cuda, "Expected attn_mask is cuda"
-        
+    def forward(ctx, query, key, value, attn_mask=None):
         ctx.Q_TILE_SIZE = 16
         ctx.K_TILE_SIZE = 16
         D = query.shape[-1]
         scale = math.sqrt(D)
+        N_BATCHES = query.shape[:-2]
+        N_QUERIES = query.shape[-2]
+        N_KEYS = key.shape[-2]
+
+        N_TILES_Q = math.ceil(N_QUERIES / ctx.Q_TILE_SIZE)
+        N_TILES_KV = math.ceil(N_KEYS / ctx.K_TILE_SIZE)
+        O = torch.empty_like(query)
+        # flash_fwd_kernel[(*N_BATCHES, ctx.N_TILES_Q, ctx.N_TILES_KV)](
+
+        # )
+        return O
+    
+    @staticmethod
+    def backward(ctx, grad_out):
+        raise NotImplementedError
+
+class PyTorchFlashAttention(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, is_causal: bool=False):
+        ctx.Q_TILE_SIZE = 16
+        ctx.K_TILE_SIZE = 16
+        D = query.shape[-1]
         N_QUERIES = query.shape[-2]
         N_KEYS = key.shape[-2]
 
@@ -114,16 +131,6 @@ class PyTorchFlashAttention(torch.autograd.Function):
         ctx.save_for_backward(*to_save)
         return O
 
-
-    @staticmethod
-    def backward(ctx, grad_out):
-        raise NotImplementedError
-
-class TritonAttention(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, query, key, value, attn_mask=None):
-        raise NotImplementedError
-    
     @staticmethod
     def backward(ctx, grad_out):
         raise NotImplementedError

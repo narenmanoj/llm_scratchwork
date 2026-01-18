@@ -69,7 +69,7 @@ if __name__ == "__main__":
                           d_ff=d_ff,
                           rope_theta=rope_theta,
                           device=device)
-    model = torch.compile(model)
+    # model = torch.compile(model)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total number of parameters: {total_params}")
 
