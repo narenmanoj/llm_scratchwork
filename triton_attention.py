@@ -77,6 +77,7 @@ def flash_fwd_kernel(
     D: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,
     KV_TILE_SIZE: tl.constexpr,
+    N_TILES_KV: tl.constexpr,
     is_causal: tl.constexpr,
 ):
     # Program indices
@@ -118,13 +119,6 @@ def flash_fwd_kernel(
         block_shape=(Q_TILE_SIZE, D),
         order=(1, 0),
     )
-    # tl.device_print("output shape", output.shape)
-    # print(output.shape)
-    # pdb.set_trace()
-    # tl.static_print(N_KEYS)
-    # tl.static_print(K_TILE_SIZE)
-    # print(N_KEYS)
-    N_TILES_KV = tl.cdiv(N_KEYS, K_TILE_SIZE)
     for j in tl.range(N_TILES_KV):
         # lower_ptr_k = j * ctx.K_TILE_SIZE
         # upper_ptr_k = min(N_KEYS, (j + 1) * ctx.K_TILE_SIZE)
@@ -133,8 +127,8 @@ def flash_fwd_kernel(
         K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero")
         V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
-        K_block_ptr = tl.advance(K_block_ptr, (K_TILE_SIZE, 0))
-        V_block_ptr = tl.advance(V_block_ptr, (K_TILE_SIZE, 0))
+        K_block_ptr = tl.advance(K_block_ptr, (KV_TILE_SIZE, 0))
+        V_block_ptr = tl.advance(V_block_ptr, (KV_TILE_SIZE, 0))
     tl.store(O_block_ptr, output, boundary_check=(0, 1))
 
 
@@ -150,6 +144,7 @@ class TritonAttention(torch.autograd.Function):
         ctx.N_KEYS = key.shape[-2]
         ctx.N_TILES_Q = math.ceil(ctx.N_QUERIES / ctx.Q_TILE_SIZE)
         ctx.is_causal = is_causal
+        ctx.N_TILES_KV = math.ceil(ctx.N_KEYS / ctx.KV_TILE_SIZE)
         
         O = torch.empty_like(query)
         L = torch.empty(query.shape[:-1], device=query.device)
@@ -161,7 +156,7 @@ class TritonAttention(torch.autograd.Function):
             O.stride(0), O.stride(1), O.stride(2),
             L.stride(0), L.stride(1),
             ctx.N_QUERIES, ctx.N_KEYS, ctx.scale,
-            D=ctx.D, Q_TILE_SIZE=ctx.Q_TILE_SIZE, KV_TILE_SIZE=ctx.KV_TILE_SIZE,
+            D=ctx.D, Q_TILE_SIZE=ctx.Q_TILE_SIZE, KV_TILE_SIZE=ctx.KV_TILE_SIZE, N_TILES_KV=ctx.N_TILES_KV,
             is_causal=ctx.is_causal
         )
         to_save = [L, query, key, value, O]
