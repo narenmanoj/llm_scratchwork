@@ -7,6 +7,7 @@ import triton.language as tl
 class PyTorchFlashAttention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, is_causal: bool=False):
+        ctx.is_causal = is_causal
         ctx.Q_TILE_SIZE = 16
         ctx.K_TILE_SIZE = 16
         D = query.shape[-1]
@@ -57,7 +58,24 @@ class PyTorchFlashAttention(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_out):
-        raise NotImplementedError
+        L, query, key, value, O = ctx.saved_tensors
+        D = reduce(einsum(O, grad_out, "batch ... seq_q d_model, batch ... seq_q d_model -> batch ... seq_q d_model"), "batch ... seq_q d_model -> batch ... seq_q", "sum")
+        scale = query.shape[-1] ** -0.5
+        seq_len = query.shape[-2]
+        S = einsum(query, key, "batch ... seq_q d_model, batch ... seq_k d_model -> batch ... seq_q seq_k") * scale
+        if ctx.is_causal:
+            mask = torch.tril(
+                torch.ones(seq_len, seq_len, device=query.device, dtype=torch.bool)
+            )
+            S = S.masked_fill(~mask, float("-inf"))
+        P = torch.exp(S - L.unsqueeze(dim=-1).expand_as(S))
+        dV = einsum(P, grad_out, "batch ... seq_q seq_k, batch ... seq_q d_model -> batch ... seq_k d_model")
+        dP = einsum(grad_out, value, "batch ... seq_q_1 d_model, batch ... seq_q_2 d_model -> batch ... seq_q_1 seq_q_2")
+        dS = einsum(P, dP - D.unsqueeze(dim=-1).expand_as(P), "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 seq_q_2 -> batch ... seq_q_1 seq_q_2")
+        dQ = einsum(dS, key, "batch ... seq_q_1 seq_q_2, batch ... seq_q_2 d_model -> batch ... seq_q_1 d_model") * scale
+        dK = einsum(dS, query, "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 d_model -> batch ... seq_q_2 d_model") * scale
+
+        return (dQ, dK, dV, None)
 
 
 @triton.jit
@@ -69,7 +87,6 @@ def flash_fwd_kernel(
     stride_ob, stride_oq, stride_od,
     stride_lb, stride_lq,
     N_QUERIES, N_KEYS,
-    scale,
     D: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,
     KV_TILE_SIZE: tl.constexpr,
@@ -171,8 +188,8 @@ class TritonAttention(torch.autograd.Function):
         ctx.KV_TILE_SIZE = 16
         assert ctx.Q_TILE_SIZE == ctx.KV_TILE_SIZE
         ctx.D = query.shape[-1]
-        ctx.scale = math.sqrt(ctx.D)
-        ctx.N_BATCHES = query.shape[0]
+        ctx.scale = ctx.D ** -0.5
+        
         ctx.N_QUERIES = query.shape[-2]
         ctx.N_KEYS = key.shape[-2]
         ctx.N_TILES_Q = math.ceil(ctx.N_QUERIES / ctx.Q_TILE_SIZE)
@@ -183,9 +200,10 @@ class TritonAttention(torch.autograd.Function):
         key_shape = key.shape
         value_shape = value.shape
         if len(query_shape) >= 3:
-            query = query.view(-1, query.size(-2), query.size(-1))
-            key = key.view(-1, key.size(-2), key.size(-1))
-            value = value.view(-1, value.size(-2), value.size(-1))
+            query = query.reshape(-1, query.size(-2), query.size(-1))
+            key = key.reshape(-1, key.size(-2), key.size(-1))
+            value = value.reshape(-1, value.size(-2), value.size(-1))
+        ctx.N_BATCHES = query.shape[0]
         O = torch.empty_like(query)
         L = torch.empty(query.shape[:-1], device=query.device, dtype=torch.float32)
         flash_fwd_kernel[(ctx.N_TILES_Q, ctx.N_BATCHES)](
@@ -195,7 +213,7 @@ class TritonAttention(torch.autograd.Function):
             value.stride(0), value.stride(1), value.stride(2),
             O.stride(0), O.stride(1), O.stride(2),
             L.stride(0), L.stride(1),
-            ctx.N_QUERIES, ctx.N_KEYS, ctx.scale,
+            ctx.N_QUERIES, ctx.N_KEYS,
             D=ctx.D, Q_TILE_SIZE=ctx.Q_TILE_SIZE, KV_TILE_SIZE=ctx.KV_TILE_SIZE, N_TILES_KV=ctx.N_TILES_KV,
             is_causal=ctx.is_causal
         )
@@ -204,6 +222,7 @@ class TritonAttention(torch.autograd.Function):
             key = torch.reshape(key, key_shape)
             value = torch.reshape(value, value_shape)
             O = torch.reshape(O, query_shape)
+            L = L.reshape(query_shape[:-1])
         to_save = [L, query, key, value, O]
         ctx.save_for_backward(*to_save)
         return O
@@ -225,7 +244,7 @@ class TritonAttention(torch.autograd.Function):
         dP = einsum(grad_out, value, "batch ... seq_q_1 d_model, batch ... seq_q_2 d_model -> batch ... seq_q_1 seq_q_2")
         dS = einsum(P, dP - D.unsqueeze(dim=-1).expand_as(P), "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 seq_q_2 -> batch ... seq_q_1 seq_q_2")
         dQ = einsum(dS, key, "batch ... seq_q_1 seq_q_2, batch ... seq_q_2 d_model -> batch ... seq_q_1 d_model") * scale
-        dK = einsum(dS, query, "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 d_model -> batch ... seq_q_2 d_model")
+        dK = einsum(dS, query, "batch ... seq_q_1 seq_q_2, batch ... seq_q_1 d_model -> batch ... seq_q_2 d_model") * scale
 
         return (dQ, dK, dV, None)
         
