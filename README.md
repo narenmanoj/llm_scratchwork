@@ -1,6 +1,6 @@
 # flashattn-lm-from-scratch
 
-A from-first-principles **Transformer language model** implementation in PyTorch, with a **Triton FlashAttention-style kernel** and end-to-end training and profiling utilities.
+A from-first-principles Transformer language model implementation in PyTorch, with a Triton FlashAttention-style kernel and end-to-end training and profiling utilities.
 ---
 
 ## Highlights
@@ -17,7 +17,7 @@ A from-first-principles **Transformer language model** implementation in PyTorch
 
 ---
 
-## Repository Structure (high level)
+## Repository structure
 
 - `custom_modules.py`  
   Core model components and reference attention implementation.
