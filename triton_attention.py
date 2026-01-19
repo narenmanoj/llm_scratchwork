@@ -184,8 +184,8 @@ def flash_fwd_kernel(
 class TritonAttention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, query, key, value, is_causal=False):
-        ctx.Q_TILE_SIZE = 128
-        ctx.KV_TILE_SIZE = 128
+        ctx.Q_TILE_SIZE = 64
+        ctx.KV_TILE_SIZE = 64
         assert ctx.Q_TILE_SIZE == ctx.KV_TILE_SIZE
         ctx.D = query.shape[-1]
         ctx.scale = ctx.D ** -0.5
