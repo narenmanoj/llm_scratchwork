@@ -205,6 +205,7 @@ if __name__ == "__main__":
                           num_heads=hyperparams["num_heads"],
                           d_ff=hyperparams["d_ff"],
                           rope_theta=hyperparams["rope_theta"],
+                          use_triton=hyperparams["triton"],
                           device=device)
     optimizer = AdamW(model.parameters())
     loss_fn = cross_entropy
