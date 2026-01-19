@@ -25,7 +25,7 @@ A from-first-principles **Transformer language model** implementation in PyTorch
   Training loop, logging, config loading, dataset wiring.
 - `benchmark*.py`  
   Microbenchmarks for forward/backward pass timing.
-- `triton_attention.py` (or similar)  
+- `triton_attention.py`
   Triton kernel(s) and the `TritonAttention` autograd wrapper.
 - `dataset*.py`  
   Dataset/tokenization/caching utilities (e.g., TinyStories/OpenWebText).
