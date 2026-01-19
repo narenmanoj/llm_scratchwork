@@ -23,11 +23,11 @@ A from-first-principles Transformer language model implementation in PyTorch, wi
   Core model components and reference attention implementation.
 - `train_script.py` / training entrypoint  
   Training loop, logging, config loading, dataset wiring.
-- `benchmark*.py`  
+- `benchmark_script.py`  
   Microbenchmarks for forward/backward pass timing.
 - `triton_attention.py`
   Triton kernel(s) and the `TritonAttention` autograd wrapper.
-- `dataset*.py`  
+- `dataset_prepare.py`  
   Dataset/tokenization/caching utilities (e.g., TinyStories/OpenWebText).
 
 ---
