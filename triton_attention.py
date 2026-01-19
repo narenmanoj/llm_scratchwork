@@ -4,10 +4,6 @@ import torch
 import triton
 import triton.language as tl
 
-from custom_modules import scaled_dot_product_attention
-
-import pdb
-
 class PyTorchFlashAttention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, is_causal: bool=False):
@@ -94,6 +90,7 @@ def flash_fwd_kernel(
         block_shape=(Q_TILE_SIZE, D),
         order=(1, 0),
     )
+    Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero")
     K_block_ptr = tl.make_block_ptr(
         K_ptr + batch_index * stride_kb,
         shape=(N_KEYS, D),
@@ -110,7 +107,7 @@ def flash_fwd_kernel(
         block_shape=(KV_TILE_SIZE, D),
         order=(1, 0),
     )
-    O_i = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
+    O_i = tl.zeros((Q_TILE_SIZE, D)).to(Q_i.type)
     O_block_ptr = tl.make_block_ptr(
         O_ptr + batch_index * stride_ob,
         shape=(N_QUERIES, D),
@@ -127,7 +124,7 @@ def flash_fwd_kernel(
         block_shape=(Q_TILE_SIZE,),
         order=(0,),
     )
-    Q_i = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+    
     m_i = tl.full((Q_TILE_SIZE,), -float("inf"), tl.float32)
     l_i = tl.full((Q_TILE_SIZE,), 0.0, tl.float32)
     for j in tl.static_range(0, N_TILES_KV):
@@ -140,7 +137,6 @@ def flash_fwd_kernel(
         P_i_rowsum = tl.sum(P_i, axis=1)
         exp_mi_diff = tl.exp(m_i - m_i_new)
         l_i = exp_mi_diff * l_i + P_i_rowsum
-        # compute O_i update here
         O_i = O_i * tl.expand_dims(exp_mi_diff, 1) + tl.dot(P_i.to(V_j.type), V_j)
         m_i = m_i_new
         K_block_ptr = tl.advance(K_block_ptr, (KV_TILE_SIZE, 0))
@@ -164,7 +160,14 @@ class TritonAttention(torch.autograd.Function):
         ctx.N_TILES_Q = math.ceil(ctx.N_QUERIES / ctx.Q_TILE_SIZE)
         ctx.is_causal = is_causal
         ctx.N_TILES_KV = math.ceil(ctx.N_KEYS / ctx.KV_TILE_SIZE)
-        
+
+        query_shape = query.shape
+        key_shape = key.shape
+        value_shape = value.shape
+        if len(query_shape) >= 3:
+            query = query.view(-1, query.size(-2), query.size(-1))
+            key = key.view(-1, key.size(-2), key.size(-1))
+            value = value.view(-1, value.size(-2), value.size(-1))
         O = torch.empty_like(query)
         L = torch.empty(query.shape[:-1], device=query.device, dtype=torch.float32)
         flash_fwd_kernel[(ctx.N_TILES_Q, ctx.N_BATCHES)](
@@ -178,6 +181,10 @@ class TritonAttention(torch.autograd.Function):
             D=ctx.D, Q_TILE_SIZE=ctx.Q_TILE_SIZE, KV_TILE_SIZE=ctx.KV_TILE_SIZE, N_TILES_KV=ctx.N_TILES_KV,
             is_causal=ctx.is_causal
         )
+        if len(query_shape) >= 3:
+            query = torch.reshape(query, query_shape)
+            key = torch.reshape(key, key_shape)
+            value = torch.reshape(value, value_shape)
         to_save = [L, query, key, value, O]
         ctx.save_for_backward(*to_save)
         return O
