@@ -50,12 +50,16 @@ if __name__ == "__main__":
                           num_heads=hyperparams["num_heads"],
                           d_ff=hyperparams["d_ff"],
                           rope_theta=hyperparams["rope_theta"],
+                          use_triton=hyperparams["triton"],
                           device=device)
     current_epoch = 0
     if len(args.load_checkpoint) > 0:
         checkpoint_file = f"{logdir}/{epoch_index}_checkpoint.tar"
         checkpoint = torch.load(checkpoint_file)
-        model.load_state_dict(checkpoint[MODEL_STATE_KEY])
+        model_state_dict = checkpoint[MODEL_STATE_KEY]
+        model_state_dict_keymap = {k: k.replace("_orig_mod.", "") for k in model_state_dict.keys()}
+        model_state_dict_clean = {model_state_dict_keymap[k]: v for k, v in model_state_dict.items()}
+        model.load_state_dict(model_state_dict_clean)
         current_epoch = checkpoint[EPOCH_KEY] + 1
         loaded_loss = checkpoint[LOSS_KEY]
         print(f"Loading checkpoint from beginning of epoch {current_epoch}")
