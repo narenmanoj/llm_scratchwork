@@ -207,6 +207,10 @@ if __name__ == "__main__":
                           rope_theta=hyperparams["rope_theta"],
                           use_triton=hyperparams["triton"],
                           device=device)
+    try:
+        model = torch.compile(model)
+    except Exception as e:
+        print(f"Model compilation didn't work, continuing: {e}")
     optimizer = AdamW(model.parameters())
     loss_fn = cross_entropy
     current_epoch = 0
