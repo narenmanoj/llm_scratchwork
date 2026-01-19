@@ -80,6 +80,9 @@ def flash_fwd_kernel(
     query_tile_index = tl.program_id(0)
     batch_index = tl.program_id(1)
 
+    q_idx = query_tile_index * Q_TILE_SIZE + tl.arange(0,  Q_TILE_SIZE)
+    q_idx_b = tl.expand_dims(q_idx, 1)
+
     # Offset each pointer with the corresponding batch index
     # multiplied with the batch stride for each tensor
     Q_block_ptr = tl.make_block_ptr(
@@ -131,26 +134,28 @@ def flash_fwd_kernel(
     max_kv_tile = query_tile_index + 1
     max_kv_tile = tl.minimum(max_kv_tile, N_TILES_KV)
     for j in tl.static_range(0, N_TILES_KV):
-        if is_causal and j >= max_kv_tile:
-            break
-        K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
-        V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
-        scores = tl.dot(Q_i, tl.trans(K_j)) * (D ** -0.5)
-        if is_causal and j == max_kv_tile - 1:
-            q_idx = tl.arange(query_tile_index * Q_TILE_SIZE, (query_tile_index + 1) * Q_TILE_SIZE)
-            kv_idx = tl.arange(j * KV_TILE_SIZE, (j + 1) * KV_TILE_SIZE)
-            q_idx_b = tl.expand_dims(q_idx, 1) 
-            kv_idx_b = tl.expand_dims(kv_idx, 0)
-            causal_mask = kv_idx_b <= q_idx_b                               
-            scores = tl.where(causal_mask, scores, -float("inf"))
-        rowmax = tl.max(scores, axis=-1)
-        m_i_new = tl.maximum(rowmax, m_i)
-        P_i = tl.exp(scores - tl.expand_dims(m_i_new, 1))
-        P_i_rowsum = tl.sum(P_i, axis=1)
-        exp_mi_diff = tl.exp(m_i - m_i_new)
-        l_i = exp_mi_diff * l_i + P_i_rowsum
-        O_i = O_i * tl.expand_dims(exp_mi_diff, 1) + tl.dot(P_i.to(V_j.type), V_j)
-        m_i = m_i_new
+        if not is_causal or (is_causal and j < max_kv_tile):
+            K_j = tl.load(K_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+            V_j = tl.load(V_block_ptr, boundary_check=(0, 1), padding_option="zero").to(tl.float32)
+            scores = tl.dot(Q_i, tl.trans(K_j)) * (D ** -0.5)
+            k_idx = j * KV_TILE_SIZE + tl.arange(0, KV_TILE_SIZE)
+            valid_k = k_idx < N_KEYS
+            scores = tl.where(tl.expand_dims(valid_k, 0), scores, -float("inf"))
+
+            if is_causal and j == max_kv_tile - 1:
+                kv_idx = j * KV_TILE_SIZE + tl.arange(0, KV_TILE_SIZE)
+                kv_idx_b = tl.expand_dims(kv_idx, 0)
+                causal_mask = kv_idx_b <= q_idx_b
+                scores = tl.where(causal_mask, scores, -float("inf"))
+
+            rowmax = tl.max(scores, axis=-1)
+            m_i_new = tl.maximum(rowmax, m_i)
+            P_i = tl.exp(scores - tl.expand_dims(m_i_new, 1))
+            P_i_rowsum = tl.sum(P_i, axis=1)
+            exp_mi_diff = tl.exp(m_i - m_i_new)
+            l_i = exp_mi_diff * l_i + P_i_rowsum
+            O_i = O_i * tl.expand_dims(exp_mi_diff, 1) + tl.dot(P_i.to(V_j.type), V_j)
+            m_i = m_i_new
         K_block_ptr = tl.advance(K_block_ptr, (KV_TILE_SIZE, 0))
         V_block_ptr = tl.advance(V_block_ptr, (KV_TILE_SIZE, 0))
     L_i = m_i + tl.log(l_i)
