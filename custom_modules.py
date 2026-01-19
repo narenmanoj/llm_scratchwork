@@ -5,6 +5,7 @@ import math
 import numpy as np
 import torch
 import torch.cuda.nvtx as nvtx
+from triton_attention import TritonAttention
 from typing import Optional
 
 
@@ -138,6 +139,16 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         cosine_result = einsum(x, relevant_cosines, einsum_str)
         sine_result = einsum(x_flip, relevant_sines, einsum_str)
         return cosine_result + sine_result
+    
+
+@nvtx.range("scaled dot product attention")
+def scaled_dot_product_attention_triton(query: torch.Tensor,
+                                 key: torch.Tensor,
+                                 value: torch.Tensor,
+                                 attn_mask: torch.Tensor | None = None) -> torch.Tensor:
+    if attn_mask is not None:
+        return TritonAttention.apply(query, key, value, True)
+    return TritonAttention.apply(query, key, value, False)
 
 
 @nvtx.range("scaled dot product attention")
@@ -165,7 +176,7 @@ def scaled_dot_product_attention(query: torch.Tensor,
 
 
 class MultiheadAttention(torch.nn.Module):
-    def __init__(self, embed_dim, num_heads, rope=None, device=None, max_seq_len=None):
+    def __init__(self, embed_dim, num_heads, rope=None, device=None, max_seq_len=None, use_triton=False):
         super(MultiheadAttention, self).__init__()
         self.d_k = int(embed_dim / num_heads)
         self.num_heads = num_heads
@@ -176,6 +187,7 @@ class MultiheadAttention(torch.nn.Module):
         self.W_O = Linear(in_features=self.out_dim, out_features=embed_dim, device=device)
         self.rope = rope
         self.max_seq_len = max_seq_len
+        self.use_triton = use_triton
         if max_seq_len:
             mask = torch.tril(
                 torch.ones(max_seq_len, max_seq_len, device=device, dtype=torch.bool)
@@ -217,7 +229,10 @@ class MultiheadAttention(torch.nn.Module):
             )
         else:
             mask = None
-        attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
+        if self.use_triton:
+            attn = scaled_dot_product_attention_triton(query=query, key=key, value=value, attn_mask=mask)
+        else:
+            attn = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=mask)
         attn = rearrange(attn, "batch h seq_k d_k -> batch seq_k h d_k")
         attn = rearrange(attn, "batch seq_k h d_k -> batch seq_k (h d_k)")
         result = self.W_O(attn)
@@ -225,7 +240,7 @@ class MultiheadAttention(torch.nn.Module):
 
 
 class PreNormTransformer(torch.nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, rope_theta, max_seq_len, device=None):
+    def __init__(self, d_model, num_heads, d_ff, rope_theta, max_seq_len, device=None, use_triton=False):
         super(PreNormTransformer, self).__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -244,6 +259,7 @@ class PreNormTransformer(torch.nn.Module):
                                       num_heads=num_heads,
                                       rope=self.rope,
                                       max_seq_len=max_seq_len,
+                                      use_triton=use_triton,
                                       device=device)
         self.swiglu = SwiGLU(d_model=d_model, d_ff=d_ff, device=device)
 
@@ -256,7 +272,7 @@ class PreNormTransformer(torch.nn.Module):
 
 
 class TransformerLM(torch.nn.Module):
-    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta, device=None):
+    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta, use_triton=False, device=None):
         super(TransformerLM, self).__init__()
         
         self.vocab_size = vocab_size
@@ -266,6 +282,7 @@ class TransformerLM(torch.nn.Module):
         self.num_heads = num_heads
         self.d_ff = d_ff
         self.rope_theta = rope_theta
+        self.use_triton = use_triton
 
         self.embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model, device=device)
         self.layers = [None] * num_layers
@@ -275,6 +292,7 @@ class TransformerLM(torch.nn.Module):
                                                 d_ff=d_ff,
                                                 rope_theta=rope_theta,
                                                 max_seq_len=context_length,
+                                                use_triton=use_triton,
                                                 device=device)
         self.last_norm = RMSNorm(d_model=d_model, device=device)
         self.last_linear = Linear(in_features=d_model, out_features=vocab_size, device=device)
