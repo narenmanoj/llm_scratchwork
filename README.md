@@ -12,8 +12,8 @@ A from-first-principles Transformer language model implementation in PyTorch, wi
 - **Naive attention baseline**
   - Reference scaled dot product attention (`softmax(QKᵀ)V`)
 - **Profiling & benchmarking**
-  - NVTX ranges + Nsight Systems/Nsight Compute friendly instrumentation
-  - Benchmark script for forward/backward timing
+  - NVTX ranges + Nsight Systems/Nsight examples for compute-heavy parts of the pipeline
+  - Benchmark script for Nsight profiling + trivial timing
 
 ---
 
